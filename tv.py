@@ -88,4 +88,87 @@ def fetch_real_binance_data():
                 _, df['P_DIR'] = calculate_psar(df['high'], df['low'], df['close'])
                 lst, prv = df.iloc[-1], df.iloc[-2]
                 
-                row[f'[{tf.upper()}] Trạng thái MA'] = "Giá > EMA20 > SMA100" if lst['close']>
+                # Phân tích MA an toàn
+                if lst['close'] > lst['E20'] > lst['S100']:
+                    ma_status = "Giá > EMA20 > SMA100"
+                elif lst['close'] < lst['E20'] < lst['S100']:
+                    ma_status = "Giá < EMA20 < SMA100"
+                else:
+                    ma_status = "Đi ngang / Lộn xộn"
+                row[f'[{tf.upper()}] Trạng thái MA'] = ma_status
+
+                # Phân tích SAR
+                if lst['P_DIR'] == 1 and prv['P_DIR'] == -1:
+                    sar_status = "SAR Vừa Cắt Xuống (Chân Sóng)"
+                elif lst['P_DIR'] == -1 and prv['P_DIR'] == 1:
+                    sar_status = "SAR Vừa Cắt Lên (Đỉnh Sóng)"
+                elif lst['P_DIR'] == 1:
+                    sar_status = "SAR Nằm Dưới (Tăng)"
+                else:
+                    sar_status = "SAR Nằm Trên (Giảm)"
+                row[f'[{tf.upper()}] Trạng thái SAR'] = sar_status
+
+                # Phân tích StochRSI
+                row[f'[{tf.upper()}] StochRSI'] = "K > D" if lst['K'] > lst['D'] else "K < D"
+            except: pass
+        data_list.append(row)
+        my_bar.progress(int((i+1)/total*100), text=f"Đang đồng bộ... {int((i+1)/total*100)}%")
+    my_bar.empty()
+    return pd.DataFrame(data_list)
+
+# ================= 2. QUẢN LÝ TRẠNG THÁI & GIAO DIỆN =================
+st.title("🛡️ BỘ LỌC THÉP - AUTO RADAR 3 PHÚT")
+
+if 'last_update' not in st.session_state: st.session_state.last_update = time.time()
+if 'df_cache' not in st.session_state: st.session_state.df_cache = pd.DataFrame()
+
+col1, col2 = st.columns([1, 5])
+with col1:
+    if st.button("🔄 Quét Ngay"): st.session_state.last_update = 0
+with col2:
+    st.caption(f"Lần cập nhật cuối: {time.strftime('%H:%M:%S', time.localtime(st.session_state.last_update))} | Hệ thống sẽ tự động quét lại ngầm sau mỗi 3 phút.")
+
+current_time = time.time()
+if current_time - st.session_state.last_update > 180 or st.session_state.df_cache.empty:
+    with st.spinner("Hệ thống đang quét thị trường..."):
+        st.session_state.df_cache = fetch_real_binance_data()
+        st.session_state.last_update = time.time()
+
+df = st.session_state.df_cache.copy()
+
+# ================= SIDEBAR MENU =================
+st.sidebar.header("🛠️ KẸP CHÉO ĐIỀU KIỆN")
+
+st.sidebar.markdown("### ⏱️ KHUNG 4H")
+ma_4h = st.sidebar.selectbox("MA (4H):", ['Bỏ qua', 'Giá > EMA20 > SMA100', 'Giá < EMA20 < SMA100', 'Đi ngang / Lộn xộn'])
+sar_4h = st.sidebar.selectbox("SAR (4H):", ['Bỏ qua', 'SAR Nằm Dưới (Tăng)', 'SAR Vừa Cắt Xuống (Chân Sóng)', 'SAR Nằm Trên (Giảm)', 'SAR Vừa Cắt Lên (Đỉnh Sóng)'])
+stoch_4h = st.sidebar.selectbox("Stoch (4H):", ['Bỏ qua', 'K > D', 'K < D'])
+
+st.sidebar.markdown("---")
+
+st.sidebar.markdown("### ⏱️ KHUNG 1H")
+ma_1h = st.sidebar.selectbox("MA (1H):", ['Bỏ qua', 'Giá > EMA20 > SMA100', 'Giá < EMA20 < SMA100', 'Đi ngang / Lộn xộn'])
+sar_1h = st.sidebar.selectbox("SAR (1H):", ['Bỏ qua', 'SAR Nằm Dưới (Tăng)', 'SAR Vừa Cắt Xuống (Chân Sóng)', 'SAR Nằm Trên (Giảm)', 'SAR Vừa Cắt Lên (Đỉnh Sóng)'])
+stoch_1h = st.sidebar.selectbox("Stoch (1H):", ['Bỏ qua', 'K > D', 'K < D'])
+
+# ================= XỬ LÝ LỌC TRỰC TIẾP TỪ BIẾN =================
+filtered = df.copy()
+
+if not filtered.empty:
+    if ma_4h != 'Bỏ qua': filtered = filtered[filtered['[4H] Trạng thái MA'] == ma_4h]
+    if sar_4h != 'Bỏ qua': filtered = filtered[filtered['[4H] Trạng thái SAR'] == sar_4h]
+    if stoch_4h != 'Bỏ qua': filtered = filtered[filtered['[4H] StochRSI'] == stoch_4h]
+
+    if ma_1h != 'Bỏ qua': filtered = filtered[filtered['[1H] Trạng thái MA'] == ma_1h]
+    if sar_1h != 'Bỏ qua': filtered = filtered[filtered['[1H] Trạng thái SAR'] == sar_1h]
+    if stoch_1h != 'Bỏ qua': filtered = filtered[filtered['[1H] StochRSI'] == stoch_1h]
+
+st.success(f"🎯 Lưới quét thu được {len(filtered)} mã.")
+if not filtered.empty:
+    st.dataframe(filtered.style.map(lambda x: 'color: #00ff00' if isinstance(x, (int, float)) and x>0 else ('color: #ff0000' if isinstance(x, (int, float)) and x<0 else ''), subset=['Thay đổi 24h (%)']), use_container_width=True, height=650)
+else:
+    st.info("Đang chờ dữ liệu hoặc không có mã thỏa mãn điều kiện lọc.")
+
+# ================= VÒNG LẶP AUTO REFRESH NGẦM =================
+time.sleep(180)
+st.rerun()
