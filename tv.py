@@ -18,6 +18,7 @@ def calculate_stoch_rsi(close, length=14, rsi_length=14, k=3, d=3):
     stochrsi = (rsi - rsi_min) / (rsi_max - rsi_min) * 100
     stochrsi_k = calculate_sma(stochrsi, k)
     return stochrsi_k, calculate_sma(stochrsi_k, d)
+
 def calculate_psar(high, low, close, step=0.02, max_step=0.2):
     length = len(close)
     psar, psar_dir, ep, af = np.zeros(length), np.zeros(length), np.zeros(length), np.zeros(length)
@@ -46,18 +47,16 @@ def calculate_psar(high, low, close, step=0.02, max_step=0.2):
                 if psar[i] < high.iloc[i-2]: psar[i] = high.iloc[i-2]
     return pd.Series(psar, index=close.index), pd.Series(psar_dir, index=close.index)
 
-# ================= 1. HÀM TẢI DỮ LIỆU AN TOÀN TUYỆT ĐỐI =================
+# ================= 1. HÀM TẢI DỮ LIỆU AN TOÀN =================
 def fetch_real_binance_data():
     try:
         response = requests.get("https://api.binance.com/api/v3/ticker/24hr", timeout=10)
-        if response.status_code != 200:
-            return pd.DataFrame()
+        if response.status_code != 200: return pd.DataFrame()
         res = response.json()
     except Exception:
         return pd.DataFrame()
         
-    if not isinstance(res, list):
-        return pd.DataFrame()
+    if not isinstance(res, list): return pd.DataFrame()
         
     valid = []
     for i in res:
@@ -69,15 +68,14 @@ def fetch_real_binance_data():
         except:
             continue
             
-    # Lấy top 50 mã volume cao nhất để quét siêu tốc
     valid = sorted(valid, key=lambda x: x['vol'], reverse=True)[:50]
     data_list = []
     
-    if not valid:
-        return pd.DataFrame()
+    if not valid: return pd.DataFrame()
         
     my_bar = st.progress(0, text="Đang đồng bộ dữ liệu từ Binance...")
     total = len(valid)
+    
     for idx, coin in enumerate(valid):
         sym = coin['symbol']
         row = {'Cặp giao dịch': sym, 'Giá hiện tại': coin['price'], 'Thay đổi 24h (%)': coin['change'], 'Volume 24h ($)': f"{coin['vol']:,.0f}"}
@@ -95,7 +93,6 @@ def fetch_real_binance_data():
                 _, df['P_DIR'] = calculate_psar(df['high'], df['low'], df['close'])
                 lst, prv = df.iloc[-1], df.iloc[-2]
                 
-                # Trạng thái MA
                 if lst['close'] > lst['E20'] > lst['S100']:
                     ma_status = "Giá > EMA20 > SMA100"
                 elif lst['close'] < lst['E20'] < lst['S100']:
@@ -104,7 +101,6 @@ def fetch_real_binance_data():
                     ma_status = "Đi ngang / Lộn xộn"
                 row[f'[{tf.upper()}] Trạng thái MA'] = ma_status
 
-                # Trạng thái SAR
                 if lst['P_DIR'] == 1 and prv['P_DIR'] == -1:
                     sar_status = "SAR Vừa Cắt Xuống (Chân Sóng)"
                 elif lst['P_DIR'] == -1 and prv['P_DIR'] == 1:
@@ -115,7 +111,6 @@ def fetch_real_binance_data():
                     sar_status = "SAR Nằm Trên (Giảm)"
                 row[f'[{tf.upper()}] Trạng thái SAR'] = sar_status
 
-                # Trạng thái StochRSI
                 row[f'[{tf.upper()}] StochRSI'] = "K > D" if lst['K'] > lst['D'] else "K < D"
             except: 
                 pass
@@ -124,7 +119,7 @@ def fetch_real_binance_data():
     my_bar.empty()
     return pd.DataFrame(data_list)
 
-# ================= 2. QUẢN LÝ TRẠNG THÁI & GIAO DIỆN =================
+# ================= 2. GIAO DIỆN STREAMLIT =================
 st.title("🛡️ BỘ LỌC THÉP - AUTO RADAR 3 PHÚT")
 
 if 'last_update' not in st.session_state: st.session_state.last_update = time.time()
@@ -134,7 +129,7 @@ col1, col2 = st.columns([1, 5])
 with col1:
     if st.button("🔄 Quét Ngay"): st.session_state.last_update = 0
 with col2:
-    st.caption(f"Lần cập nhật cuối: {time.strftime('%H:%M:%S', time.localtime(st.session_state.last_update))} | Hệ thống sẽ tự động quét lại ngầm sau mỗi 3 phút.")
+    st.caption(f"Lần cập nhật cuối: {time.strftime('%H:%M:%S', time.localtime(st.session_state.last_update))} | Hệ thống tự động quét lại sau mỗi 3 phút.")
 
 current_time = time.time()
 if current_time - st.session_state.last_update > 180 or st.session_state.df_cache.empty:
@@ -159,7 +154,7 @@ ma_1h = st.sidebar.selectbox("MA (1H):", ['Bỏ qua', 'Giá > EMA20 > SMA100', '
 sar_1h = st.sidebar.selectbox("SAR (1H):", ['Bỏ qua', 'SAR Nằm Dưới (Tăng)', 'SAR Vừa Cắt Xuống (Chân Sóng)', 'SAR Nằm Trên (Giảm)', 'SAR Vừa Cắt Lên (Đỉnh Sóng)'])
 stoch_1h = st.sidebar.selectbox("Stoch (1H):", ['Bỏ qua', 'K > D', 'K < D'])
 
-# ================= XỬ LÝ LỌC TRỰC TIẾP TỪ BIẾN =================
+# ================= XỬ LÝ LỌC =================
 filtered = df.copy()
 
 if not filtered.empty:
@@ -173,10 +168,9 @@ if not filtered.empty:
 
 st.success(f"🎯 Lưới quét thu được {len(filtered)} mã.")
 if not filtered.empty:
-    st.dataframe(filtered.style.map(lambda x: 'color: #00ff00' if isinstance(x, (int, float)) and x>0 else ('color: #ff0000' if isinstance(x, (int, float)) and x<0 else ''), subset=['Thay đổi 24h (%)']), use_container_width=True, height=650)
+    st.dataframe(filtered, use_container_width=True, height=650)
 else:
     st.info("Đang chờ dữ liệu hoặc không có mã thỏa mãn điều kiện lọc.")
 
-# ================= VÒNG LẶP AUTO REFRESH NGẦM =================
 time.sleep(180)
 st.rerun()
