@@ -46,7 +46,7 @@ def calculate_psar(high, low, close, step=0.02, max_step=0.2):
                 if psar[i] < high.iloc[i-2]: psar[i] = high.iloc[i-2]
     return pd.Series(psar, index=close.index), pd.Series(psar_dir, index=close.index)
 
-# ================= 1. HÀM TẢI DỮ LIỆU TỪ LÕI BINANCE (TỐI ƯU TỐC ĐỘ & AN TOÀN) =================
+# ================= 1. HÀM TẢI DỮ LIỆU AN TOÀN TUYỆT ĐỐI =================
 def fetch_real_binance_data():
     try:
         response = requests.get("https://api.binance.com/api/v3/ticker/24hr", timeout=10)
@@ -62,12 +62,14 @@ def fetch_real_binance_data():
     valid = []
     for i in res:
         try:
-            if i['symbol'].endswith('USDT') and float(i['lastPrice']) <= 100 and i['symbol'] not in ['USDCUSDT', 'FDUSDUSDT', 'TUSDUSDT', 'BUSDUSDT', 'USDPUSDT'] and 'UPUSDT' not in i['symbol'] and 'DOWNUSDT' not in i['symbol']:
-                valid.append({'symbol': i['symbol'], 'price': float(i['lastPrice']), 'change': float(i['priceChangePercent']), 'vol': float(i['quoteVolume'])})
+            if isinstance(i, dict) and 'symbol' in i and 'lastPrice' in i:
+                sym = i['symbol']
+                if sym.endswith('USDT') and float(i['lastPrice']) <= 100 and sym not in ['USDCUSDT', 'FDUSDUSDT', 'TUSDUSDT', 'BUSDUSDT', 'USDPUSDT'] and 'UPUSDT' not in sym and 'DOWNUSDT' not in sym:
+                    valid.append({'symbol': sym, 'price': float(i['lastPrice']), 'change': float(i['priceChangePercent']), 'vol': float(i['quoteVolume'])})
         except:
             continue
             
-    # Lấy top 50 mã có volume cao nhất để bot quét cực nhanh trên Cloud không bị nghẽn
+    # Lấy top 50 mã volume cao nhất để quét siêu tốc
     valid = sorted(valid, key=lambda x: x['vol'], reverse=True)[:50]
     data_list = []
     
@@ -76,19 +78,24 @@ def fetch_real_binance_data():
         
     my_bar = st.progress(0, text="Đang đồng bộ dữ liệu từ Binance...")
     total = len(valid)
-    for i, coin in enumerate(valid):
+    for idx, coin in enumerate(valid):
         sym = coin['symbol']
         row = {'Cặp giao dịch': sym, 'Giá hiện tại': coin['price'], 'Thay đổi 24h (%)': coin['change'], 'Volume 24h ($)': f"{coin['vol']:,.0f}"}
         for tf in ['1h', '4h']:
             try:
-                kline = requests.get(f"https://api.binance.com/api/v3/klines?symbol={sym}&interval={tf}&limit=500", timeout=5).json()
+                kline_res = requests.get(f"https://api.binance.com/api/v3/klines?symbol={sym}&interval={tf}&limit=500", timeout=5)
+                if kline_res.status_code != 200: continue
+                kline = kline_res.json()
+                if not isinstance(kline, list): continue
+                
                 df = pd.DataFrame(kline, columns=['t','o','high','low','close','v','ct','qav','n','tbv','tqv','i']).astype({'high':float, 'low':float, 'close':float})
-                df['E20'], df['S100'] = calculate_ema(df['close'], 20), calculate_sma(df['close'], 100)
+                df['E20'] = calculate_ema(df['close'], 20)
+                df['S100'] = calculate_sma(df['close'], 100)
                 df['K'], df['D'] = calculate_stoch_rsi(df['close'])
                 _, df['P_DIR'] = calculate_psar(df['high'], df['low'], df['close'])
                 lst, prv = df.iloc[-1], df.iloc[-2]
                 
-                # Phân tích MA an toàn
+                # Trạng thái MA
                 if lst['close'] > lst['E20'] > lst['S100']:
                     ma_status = "Giá > EMA20 > SMA100"
                 elif lst['close'] < lst['E20'] < lst['S100']:
@@ -97,7 +104,7 @@ def fetch_real_binance_data():
                     ma_status = "Đi ngang / Lộn xộn"
                 row[f'[{tf.upper()}] Trạng thái MA'] = ma_status
 
-                # Phân tích SAR
+                # Trạng thái SAR
                 if lst['P_DIR'] == 1 and prv['P_DIR'] == -1:
                     sar_status = "SAR Vừa Cắt Xuống (Chân Sóng)"
                 elif lst['P_DIR'] == -1 and prv['P_DIR'] == 1:
@@ -108,11 +115,12 @@ def fetch_real_binance_data():
                     sar_status = "SAR Nằm Trên (Giảm)"
                 row[f'[{tf.upper()}] Trạng thái SAR'] = sar_status
 
-                # Phân tích StochRSI
+                # Trạng thái StochRSI
                 row[f'[{tf.upper()}] StochRSI'] = "K > D" if lst['K'] > lst['D'] else "K < D"
-            except: pass
+            except: 
+                pass
         data_list.append(row)
-        my_bar.progress(int((i+1)/total*100), text=f"Đang đồng bộ... {int((i+1)/total*100)}%")
+        my_bar.progress(int((idx + 1) / total * 100), text=f"Đang đồng bộ... {int((idx + 1) / total * 100)}%")
     my_bar.empty()
     return pd.DataFrame(data_list)
 
