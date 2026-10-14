@@ -46,14 +46,33 @@ def calculate_psar(high, low, close, step=0.02, max_step=0.2):
                 if psar[i] < high.iloc[i-2]: psar[i] = high.iloc[i-2]
     return pd.Series(psar, index=close.index), pd.Series(psar_dir, index=close.index)
 
-# ================= 1. HÀM TẢI DỮ LIỆU TỪ LÕI BINANCE =================
+# ================= 1. HÀM TẢI DỮ LIỆU TỪ LÕI BINANCE (ĐÃ BỌC AN TOÀN) =================
 def fetch_real_binance_data():
-    try: res = requests.get("https://api.binance.com/api/v3/ticker/24hr", timeout=10).json()
-    except: return pd.DataFrame()
-    valid = [{'symbol': i['symbol'], 'price': float(i['lastPrice']), 'change': float(i['priceChangePercent']), 'vol': float(i['quoteVolume'])} 
-             for i in res if i['symbol'].endswith('USDT') and float(i['lastPrice'])<=100 and i['symbol'] not in ['USDCUSDT', 'FDUSDUSDT', 'TUSDUSDT', 'BUSDUSDT', 'USDPUSDT'] and 'UPUSDT' not in i['symbol'] and 'DOWNUSDT' not in i['symbol']]
+    try:
+        response = requests.get("https://api.binance.com/api/v3/ticker/24hr", timeout=10)
+        if response.status_code != 200:
+            return pd.DataFrame()
+        res = response.json()
+    except Exception:
+        return pd.DataFrame()
+        
+    if not isinstance(res, list):
+        return pd.DataFrame()
+        
+    valid = []
+    for i in res:
+        try:
+            if i['symbol'].endswith('USDT') and float(i['lastPrice']) <= 100 and i['symbol'] not in ['USDCUSDT', 'FDUSDUSDT', 'TUSDUSDT', 'BUSDUSDT', 'USDPUSDT'] and 'UPUSDT' not in i['symbol'] and 'DOWNUSDT' not in i['symbol']:
+                valid.append({'symbol': i['symbol'], 'price': float(i['lastPrice']), 'change': float(i['priceChangePercent']), 'vol': float(i['quoteVolume'])})
+        except:
+            continue
+            
     valid = sorted(valid, key=lambda x: x['vol'], reverse=True)[:150]
     data_list = []
+    
+    if not valid:
+        return pd.DataFrame()
+        
     my_bar = st.progress(0, text="Đang đồng bộ dữ liệu từ Binance...")
     total = len(valid)
     for i, coin in enumerate(valid):
@@ -80,27 +99,24 @@ def fetch_real_binance_data():
 # ================= 2. QUẢN LÝ TRẠNG THÁI & GIAO DIỆN =================
 st.title("🛡️ BỘ LỌC THÉP - AUTO RADAR 3 PHÚT")
 
-# Khởi tạo bộ nhớ tạm để không bị mất dữ liệu khi click menu
 if 'last_update' not in st.session_state: st.session_state.last_update = time.time()
 if 'df_cache' not in st.session_state: st.session_state.df_cache = pd.DataFrame()
 
 col1, col2 = st.columns([1, 5])
 with col1:
-    if st.button("🔄 Quét Ngay"): st.session_state.last_update = 0 # Ép hệ thống tải lại ngay lập tức
+    if st.button("🔄 Quét Ngay"): st.session_state.last_update = 0
 with col2:
     st.caption(f"Lần cập nhật cuối: {time.strftime('%H:%M:%S', time.localtime(st.session_state.last_update))} | Hệ thống sẽ tự động quét lại ngầm sau mỗi 3 phút.")
 
-# Logic kiểm tra thời gian (nếu quá 180s thì tải data mới)
 current_time = time.time()
 if current_time - st.session_state.last_update > 180 or st.session_state.df_cache.empty:
     with st.spinner("Hệ thống đang quét thị trường (Sẽ mất khoảng 1 phút)..."):
         st.session_state.df_cache = fetch_real_binance_data()
         st.session_state.last_update = time.time()
 
-# Lấy dữ liệu từ bộ nhớ tạm ra để lọc
 df = st.session_state.df_cache.copy()
 
-# ================= SIDEBAR MENU ĐÃ FIX LỖI =================
+# ================= SIDEBAR MENU =================
 st.sidebar.header("🛠️ KẸP CHÉO ĐIỀU KIỆN")
 
 st.sidebar.markdown("### ⏱️ KHUNG 4H")
@@ -118,19 +134,21 @@ stoch_1h = st.sidebar.selectbox("Stoch (1H):", ['Bỏ qua', 'K > D', 'K < D'])
 # ================= XỬ LÝ LỌC TRỰC TIẾP TỪ BIẾN =================
 filtered = df.copy()
 
-if ma_4h != 'Bỏ qua': filtered = filtered[filtered['[4H] Trạng thái MA'] == ma_4h]
-if sar_4h != 'Bỏ qua': filtered = filtered[filtered['[4H] Trạng thái SAR'] == sar_4h]
-if stoch_4h != 'Bỏ qua': filtered = filtered[filtered['[4H] StochRSI'] == stoch_4h]
+if not filtered.empty:
+    if ma_4h != 'Bỏ qua': filtered = filtered[filtered['[4H] Trạng thái MA'] == ma_4h]
+    if sar_4h != 'Bỏ qua': filtered = filtered[filtered['[4H] Trạng thái SAR'] == sar_4h]
+    if stoch_4h != 'Bỏ qua': filtered = filtered[filtered['[4H] StochRSI'] == stoch_4h]
 
-if ma_1h != 'Bỏ qua': filtered = filtered[filtered['[1H] Trạng thái MA'] == ma_1h]
-if sar_1h != 'Bỏ qua': filtered = filtered[filtered['[1H] Trạng thái SAR'] == sar_1h]
-if stoch_1h != 'Bỏ qua': filtered = filtered[filtered['[1H] StochRSI'] == stoch_1h]
+    if ma_1h != 'Bỏ qua': filtered = filtered[filtered['[1H] Trạng thái MA'] == ma_1h]
+    if sar_1h != 'Bỏ qua': filtered = filtered[filtered['[1H] Trạng thái SAR'] == sar_1h]
+    if stoch_1h != 'Bỏ qua': filtered = filtered[filtered['[1H] StochRSI'] == stoch_1h]
 
 st.success(f"🎯 Lưới quét thu được {len(filtered)} mã.")
-st.dataframe(filtered.style.map(lambda x: 'color: #00ff00' if isinstance(x, (int, float)) and x>0 else ('color: #ff0000' if isinstance(x, (int, float)) and x<0 else ''), subset=['Thay đổi 24h (%)']), use_container_width=True, height=650)
+if not filtered.empty:
+    st.dataframe(filtered.style.map(lambda x: 'color: #00ff00' if isinstance(x, (int, float)) and x>0 else ('color: #ff0000' if isinstance(x, (int, float)) and x<0 else ''), subset=['Thay đổi 24h (%)']), use_container_width=True, height=650)
+else:
+    st.info("Đang chờ dữ liệu hoặc không có mã thỏa mãn điều kiện lọc.")
 
 # ================= VÒNG LẶP AUTO REFRESH NGẦM =================
-# Hệ thống sẽ ngủ 180s. Tuy nhiên, nếu anh click chuột vào menu, nó sẽ tự động thức dậy, 
-# áp dụng bộ lọc mới ngay lập tức, và đếm ngược 180s lại từ đầu.
 time.sleep(180)
 st.rerun()
